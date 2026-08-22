@@ -1,0 +1,24 @@
+{
+  "name": "tako-pi",
+  "version": "0.1.0",
+  "private": false,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Barrierml/tako-pi.git"
+  },
+  "description": "Tako-native Pi harness: live model catalog, Tako /v1/search, Tako-style footer.",
+  "keywords": ["pi-package", "tako"],
+  "pi": {
+    "extensions": [
+      "./extensions/tako-provider.ts",
+      "./extensions/tako-search.ts",
+      "./extensions/tako-footer.ts",
+      "./extensions/tako-capsules.ts",
+      "./extensions/tako-welcome.ts",
+      "./extensions/tako-model-picker.ts",
+      "./extensions/tako-autocompact.ts",
+      "./extensions/tako-tiny32k.ts"
+    ]
+  }
+}
