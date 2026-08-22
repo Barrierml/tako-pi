@@ -117,11 +117,14 @@ function formatPct(ratio: number): string {
   return `${Math.round(ratio * 100)}%`;
 }
 
-function catalogModel(ctx: ExtensionContext, current: Model<Api>): Model<Api> {
+function summarizerModel(ctx: ExtensionContext, current: Model<Api>): Model<Api> {
+  // Use the catalog copy only for the one-shot summary call.
+  // Never assign it back onto the live session model — that would
+  // expand a user-shrunk window (e.g. 128k) to the catalog cap.
   const catalog = ctx.modelRegistry.find("tako", current.id) ?? ctx.modelRegistry.find(current.provider, current.id);
   if (!catalog) return current;
-  if ((current.contextWindow || 0) >= (catalog.contextWindow || 0)) return current;
-  return { ...catalog, id: current.id };
+  if ((catalog.contextWindow || 0) <= (current.contextWindow || 0)) return current;
+  return { ...current, contextWindow: catalog.contextWindow, maxTokens: catalog.maxTokens ?? current.maxTokens };
 }
 
 function overflowError(tokens: number, threshold: number): string {
@@ -282,7 +285,7 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       const { tokens, usedRatio, window, threshold, official, nativeOn, keepRecentTokens } = snapshot(ctx);
-      const summarizer = ctx.model ? catalogModel(ctx, ctx.model) : undefined;
+      const summarizer = ctx.model ? summarizerModel(ctx, ctx.model) : undefined;
       const nowText =
         tokens == null || usedRatio == null
           ? "?"
@@ -315,8 +318,8 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_before_compact", async (event, ctx) => {
     const current = ctx.model;
     if (!current) return;
-    const summarizer = catalogModel(ctx, current);
-    if (summarizer.contextWindow <= (current.contextWindow || 0) && summarizer.provider === current.provider) {
+    const summarizer = summarizerModel(ctx, current);
+    if (summarizer.contextWindow <= (current.contextWindow || 0)) {
       return;
     }
     const auth = await ctx.modelRegistry.getApiKeyAndHeaders(summarizer);

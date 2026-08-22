@@ -399,8 +399,20 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("model_select", async (event, ctx) => {
     if (applying) return;
-    if (!ctx.hasUI) return;
     if (event.source !== "set") return;
+    // Compaction / provider refresh can replace a user-shrunk clone with the
+    // catalog cap. Put the saved window back instead of popping the tuner.
+    const saved = restoreFromSession(ctx) ?? readPrefs();
+    if (
+      saved &&
+      event.model.provider === saved.provider &&
+      event.model.id === saved.modelId &&
+      event.model.contextWindow !== saved.contextWindow
+    ) {
+      await applyPick(ctx, event.model, saved.contextWindow, saved.thinkingLevel, false);
+      return;
+    }
+    if (!ctx.hasUI) return;
     await tuneModel(ctx, event.model);
   });
 
