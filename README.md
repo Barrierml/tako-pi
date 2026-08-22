@@ -152,8 +152,23 @@ agent.continue()   ← 同一回合接着干
 | `tako-model-picker.ts` | `/model` 之后的同页选择器。`/tmodel` `/effort` |
 | `tako-autocompact.ts` | 中途压缩 |
 | `tako-tiny32k.ts` | 假 32k 测试 provider，日常别用 |
+| `skills/tako-subagents` | 按任务选 Tako 模型委派内置壳，不预创建角色 |
 
 `/model` 是 Pi 内置命令，插件替换不了。选择器挂在 `model_select` 后面。
+
+---
+
+## 子代理
+
+不要预先创建一堆 named agent。装 `npm:pi-subagents` 后，父会话按任务选壳 + 选模型：
+
+```text
+用便宜模型先摸 auth
+找个模型审这个 diff
+这个问题先问 oracle，别开写
+```
+
+档位在 `skills/tako-subagents/SKILL.md`：scout 用 flash-lite，写代码用 grok / kimi-code，难决策用 grok / opus。只有现成壳对不上才 `subagent create`，用完不必留着。
 
 ---
 

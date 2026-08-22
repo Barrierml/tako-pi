@@ -19,6 +19,9 @@
       "./extensions/tako-model-picker.ts",
       "./extensions/tako-autocompact.ts",
       "./extensions/tako-tiny32k.ts"
+    ],
+    "skills": [
+      "./skills"
     ]
   }
 }
