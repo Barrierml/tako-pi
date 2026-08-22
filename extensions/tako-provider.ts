@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { readTakoApiKey, TAKO_BASE } from "../lib/tako-auth.ts";
+import { tryReadTakoApiKey, TAKO_BASE } from "../lib/tako-auth.ts";
 
 const TAKO_MESSAGES_BASE = `${TAKO_BASE}/api`;
 const MODELS_URL = `${TAKO_BASE}/v1/models?client_version=tako-cli&api_type=claude`;
@@ -158,19 +158,17 @@ async function fetchLiveCatalog(apiKey: string): Promise<ChatModel[] | null> {
 }
 
 export default async function (pi: ExtensionAPI) {
-  const apiKey = readTakoApiKey();
-  const models = (await fetchLiveCatalog(apiKey)) ?? (await readCache()) ?? [];
-  if (models.length === 0) {
-    throw new Error("tako-pi: no Tako chat models (live fetch and local cache both empty)");
+  const apiKey = tryReadTakoApiKey();
+  const models = (apiKey ? await fetchLiveCatalog(apiKey) : null) ?? (await readCache()) ?? [];
+  if (models.length > 0) {
+    pi.registerProvider("tako", {
+      name: "Tako",
+      baseUrl: TAKO_MESSAGES_BASE,
+      apiKey: "!node -p \"require(require('os').homedir() + '/.tako/config.json').apiKey\"",
+      api: "anthropic-messages",
+      models,
+    });
   }
-
-  pi.registerProvider("tako", {
-    name: "Tako",
-    baseUrl: TAKO_MESSAGES_BASE,
-    apiKey: "!node -p \"require(require('os').homedir() + '/.tako/config.json').apiKey\"",
-    api: "anthropic-messages",
-    models,
-  });
 
   // Tako/Grok overflow phrasing is not always in Pi's built-in list.
   // Rewrite so auto-compaction can compact-and-retry mid-turn.

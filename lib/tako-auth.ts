@@ -23,9 +23,14 @@ export function readTakoConfig(): TakoConfig {
   }
 }
 
+export function tryReadTakoApiKey(): string | undefined {
+  const key = readTakoConfig().apiKey;
+  return typeof key === "string" && key ? key : undefined;
+}
+
 export function readTakoApiKey(): string {
-  const cfg = readTakoConfig();
-  if (typeof cfg.apiKey === "string" && cfg.apiKey) return cfg.apiKey;
+  const key = tryReadTakoApiKey();
+  if (key) return key;
   throw new Error("tako-pi: missing ~/.tako/config.json apiKey");
 }
 

@@ -7,7 +7,7 @@
     "type": "git",
     "url": "git+https://github.com/Barrierml/tako-pi.git"
   },
-  "description": "Tako-native Pi harness: live model catalog, Tako /v1/search, Tako-style footer.",
+  "description": "Pi package: Tako catalog/search/quota, plus mid-turn compact that works with any provider.",
   "keywords": ["pi-package", "tako"],
   "pi": {
     "extensions": [

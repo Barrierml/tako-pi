@@ -5,7 +5,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
-import { TAKO_BASE, TAKO_CONFIG_PATH, readTakoApiKey, type TakoConfig } from "../lib/tako-auth.ts";
+import { TAKO_BASE, TAKO_CONFIG_PATH, tryReadTakoApiKey, type TakoConfig } from "../lib/tako-auth.ts";
 
 const WIDGET = "tako-welcome";
 const FETCH_MS = 2500;
@@ -104,7 +104,9 @@ export default function (pi: ExtensionAPI) {
   }
 
   async function load(): Promise<Announcement | undefined> {
-    const announcement = await fetchAnnouncement(readTakoApiKey());
+    const apiKey = tryReadTakoApiKey();
+    if (!apiKey) return undefined;
+    const announcement = await fetchAnnouncement(apiKey);
     if (announcement) markAnnouncementSeen(announcement.id);
     return announcement;
   }
