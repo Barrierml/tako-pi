@@ -21,7 +21,7 @@ pi install git:github.com/Barrierml/tako-pi
 | 5 | 同页 Context + Effort | `/model` 之后，或 `/tmodel` `/effort` | 不要 | `tako-model-picker.ts` |
 | 6 | 中途压缩 | `/tcompact` | 不要，任意 provider | `tako-autocompact.ts` |
 | 7 | 已装清单 | `/installed` | 不要 | `tako-capsules.ts` |
-| 8 | 子代理选模型 | 自然语言委派 | 建议有，用来选 Tako 模型 | `skills/tako-subagents` |
+| 8 | 子代理 | `task({ prompt, tier })`；编辑器下进度条 | 建议有 | `tako-spawn.ts` `skills/tako-subagents` |
 | 9 | 32k 测试 provider | `/model tako-tiny32k grok-4.6` | 要 | `tako-tiny32k.ts` |
 
 下面按这个顺序逐项说明。
@@ -205,7 +205,7 @@ pi install ~/.pi/agent/local/tako-pi
         │
         ▼
 下一次 LLM 调用返回
-context_length_exceeded: mid-turn auto-compact
+合成 overflow（内部仍是 context_length_exceeded，画面显示「正在压缩会话，马上继续」）
         │
         ▼
 官方 Pi 写入 type: "compaction"
@@ -225,7 +225,7 @@ agent.continue()   ← 同一回合接着干
 - 不要再叠第二个 compact 插件，Pi 会跑每一个 compact handler
 - wrap `streamSimple` 时不要带 `models`，否则会把现场目录覆盖掉
 
-成功时先闪 `mid-turn auto-compact`，再转圈 `Context overflow detected, Auto-compacting...`，footer 的 `⚡` 会掉下来。
+成功时先闪灰字「正在压缩会话，马上继续」，再转圈 `Auto-compacting...`，footer 的 `⚡` 会掉下来。内部仍用 `context_length_exceeded` 触发官方 compact-and-retry，所以偶发会先闪一下红字再被改掉。
 
 ---
 
@@ -241,44 +241,25 @@ agent.continue()   ← 同一回合接着干
 
 ---
 
-## 8. 子代理选模型
+## 8. 子代理
 
-不要预先创建一堆 named agent。配合 `npm:pi-subagents` 的 6 个壳，父会话按任务选壳 + 选模型：
+自己起一个 `pi --mode json` 子进程。不要 `npm:pi-subagents`，不要角色表。只要一个工具：写提示、选档位、等文字回来。
 
-| 壳 | 干什么 |
-|---|---|
-| `scout` | 摸代码 |
-| `researcher` | 查资料 |
-| `worker` | 动手改 |
-| `reviewer` | 审 diff |
-| `oracle` | 拍板前第二意见，不改文件 |
-| `delegate` | 轻量替身 |
+```js
+task({ prompt: "只读摸 auth", tier: "normal", readonly: true })
+```
 
-档位（id 都是 `tako/<id>`）：
+父模型只选档位：`normal` = `tako/mimo-v2.5:low`，`self` = 当前父会话模型。并行就调两次。工具结果就是子代理最后一条正文。
 
-| 档 | 模型 | 适合 |
-|---|---|---|
-| 便宜快 | `gemini-3.5-flash-lite` `deepseek-v4-flash` `claude-haiku-4-5` | scout、机械查找 |
-| 日常写代码 | `grok-4.6` `kimi-k2.7-code` `kimi-k3` | worker |
-| 审代码 | `kimi-k2.7-code` `grok-4.6` `claude-sonnet-4-6` | reviewer |
-| 难决策 | `grok-4.6` `claude-opus-4-7` `claude-sonnet-5` | oracle |
-| 口味 / 文案 | `claude-fable-5` | 含糊需求、UX、计划 |
-
-直接说人话即可：
+进度在编辑器**下面**：
 
 ```text
-用便宜模型先摸 auth
-找个模型审这个 diff
-这个问题先问 oracle，别开写
+● task  normal · ro  只读摸 Downloads   12s  bash
 ```
 
-只有现成壳对不上才 `subagent create`，用完不必留着。完整路由在 `skills/tako-subagents/SKILL.md`。
+折叠行是档位 + 任务。Ctrl+O 展开同一行，看发给孩子的 system / user 和回来的报告。
 
-配套安装：
-
-```bash
-pi install npm:pi-subagents
-```
+完整路由和档位在 `skills/tako-subagents/SKILL.md`。
 
 ---
 

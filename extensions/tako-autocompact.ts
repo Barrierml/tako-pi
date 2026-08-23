@@ -127,8 +127,65 @@ function summarizerModel(ctx: ExtensionContext, current: Model<Api>): Model<Api>
   return { ...current, contextWindow: catalog.contextWindow, maxTokens: catalog.maxTokens ?? current.maxTokens };
 }
 
+const SYNTHETIC_MARK = "compacting conversation to continue";
+const CAPTURE_WIDGET = "tako-compact-capture";
+
 function overflowError(tokens: number, threshold: number): string {
-  return `context_length_exceeded: mid-turn auto-compact (est. ${formatK(tokens)} > ${formatK(threshold)})`;
+  // Must keep context_length_exceeded so official compact-and-retry fires.
+  // Wording is a status, not a crash; TUI still prefixes Error: so we restyle it.
+  return `context_length_exceeded: ${SYNTHETIC_MARK} (${formatK(tokens)} / trigger ${formatK(threshold)})`;
+}
+
+function isSyntheticOverflow(message: { stopReason?: string; errorMessage?: string } | undefined): boolean {
+  if (!message || message.stopReason !== "error") return false;
+  const text = message.errorMessage ?? "";
+  return /context[_ ]length[_ ]exceeded/i.test(text) && text.includes(SYNTHETIC_MARK);
+}
+
+function walkComponents(node: unknown, visit: (node: Record<string, unknown>) => void): void {
+  if (!node || typeof node !== "object") return;
+  const rec = node as Record<string, unknown>;
+  visit(rec);
+  if (Array.isArray(rec.children)) {
+    for (const child of rec.children) walkComponents(child, visit);
+  }
+}
+
+function captureTui(ctx: ExtensionContext): { tui: { requestRender?: () => void }; theme: { fg: (token: string, text: string) => string } } | undefined {
+  if (ctx.mode !== "tui") return undefined;
+  let captured: { tui: { requestRender?: () => void }; theme: { fg: (token: string, text: string) => string } } | undefined;
+  ctx.ui.setWidget(CAPTURE_WIDGET, (tui, theme) => {
+    captured = { tui, theme };
+    return { render: () => [], invalidate() {} };
+  });
+  ctx.ui.setWidget(CAPTURE_WIDGET, undefined);
+  return captured;
+}
+
+function findCompactionIndicator(root: unknown): { setMessage: (message: string) => void } | undefined {
+  let found: { setMessage: (message: string) => void } | undefined;
+  walkComponents(root, (node) => {
+    if (found) return;
+    if (node.kind === "compaction" && typeof node.setMessage === "function") {
+      found = node as { setMessage: (message: string) => void };
+    }
+  });
+  return found;
+}
+
+function restyleOverflowError(ctx: ExtensionContext, label: string, tone: "muted" | "success" = "muted"): void {
+  const captured = captureTui(ctx);
+  if (!captured) return;
+  findCompactionIndicator(captured.tui)?.setMessage(`${label} (Esc to cancel)`);
+  walkComponents(captured.tui, (node) => {
+    if (typeof node.setText !== "function" || typeof node.text !== "string") return;
+    const text = node.text as string;
+    if (!/Error:\s*context[_ ]length[_ ]exceeded/i.test(text) && !text.includes(SYNTHETIC_MARK) && !/mid-turn auto-compact/i.test(text)) {
+      return;
+    }
+    (node.setText as (value: string) => void)(captured.theme.fg(tone, label));
+  });
+  captured.tui.requestRender?.();
 }
 
 function syntheticOverflow(model: Model<Api>, tokens: number, threshold: number) {
@@ -196,6 +253,7 @@ export default function (pi: ExtensionAPI) {
     interceptCount += 1;
     awaitingOfficial = true;
     lastTrigger = `${request.provider}/${request.model} ${formatK(request.tokens)} > ${formatK(request.threshold)}`;
+    lastError = undefined;
     return syntheticOverflow(model, request.tokens, request.threshold);
   }
 
@@ -315,7 +373,21 @@ export default function (pi: ExtensionAPI) {
     );
   });
 
+  pi.on("message_end", (event, ctx) => {
+    if (event.message.role !== "assistant") return;
+    if (!isSyntheticOverflow(event.message)) return;
+    const label = "Compacting conversation to continue…";
+    // TUI paints Error: after this handler; restyle on the next tick.
+    setTimeout(() => {
+      restyleOverflowError(ctx, label);
+      if (ctx.hasUI) ctx.ui.setStatus("tako-compact", ctx.ui.theme.fg("muted", "compact…"));
+    }, 0);
+  });
+
   pi.on("session_before_compact", async (event, ctx) => {
+    if (awaitingOfficial || event.reason === "overflow") {
+      restyleOverflowError(ctx, "Compacting conversation to continue…");
+    }
     const current = ctx.model;
     if (!current) return;
     const summarizer = summarizerModel(ctx, current);
@@ -358,7 +430,7 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  pi.on("session_compact", (event) => {
+  pi.on("session_compact", (event, ctx) => {
     armed = undefined;
     if (awaitingOfficial && event.reason === "overflow" && event.willRetry) {
       compactCount += 1;
@@ -366,6 +438,9 @@ export default function (pi: ExtensionAPI) {
       lastError = undefined;
     }
     awaitingOfficial = false;
+    if (ctx.hasUI) ctx.ui.setStatus("tako-compact", undefined);
+    // compaction_end rebuilds chat after this event; restyle any leftover Error: line.
+    setTimeout(() => restyleOverflowError(ctx, "Conversation compacted. Continuing…", "success"), 0);
   });
 
   pi.on("model_select", () => {
