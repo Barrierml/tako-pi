@@ -23,6 +23,7 @@ pi install git:github.com/Barrierml/tako-pi
 | 7 | 已装清单 | `/installed` | 不要 | `tako-capsules.ts` |
 | 8 | 子代理 | `task({ prompt, tier })`；编辑器下进度条 | 建议有 | `tako-spawn.ts` `skills/tako-subagents` |
 | 9 | 32k 测试 provider | `/model tako-tiny32k grok-4.6` | 要 | `tako-tiny32k.ts` |
+| 10 | Claude 工具行（推荐） | `/cc-tools` `/cc-theme` | 不要 | 另装 `npm:pi-claude-code-ui` |
 
 下面按这个顺序逐项说明。
 
@@ -57,7 +58,9 @@ pi install git:github.com/Barrierml/tako-pi
     "keepRecentTokens": 20000
   },
   "packages": [
-    "git:github.com/Barrierml/tako-pi"
+    "git:github.com/Barrierml/tako-pi",
+    "npm:pi-cc-header",
+    "npm:pi-claude-code-ui"
   ]
 }
 ```
@@ -123,16 +126,26 @@ pi install ~/.pi/agent/local/tako-pi
 ## 3. Footer 状态栏
 
 ```
-📁 ~/proj │ 🌿 main │ 🤖 grok-4.6 │ ⚡73% 34k/128k │ 💰 5h 0% · 7d 100% │ 🐙 Tako
+📁 ~/proj │ 🌿 main │ 🤖 grok-4.6
+⚡ ████████░░ 73% 34k/128k │ 💰 5h 0% · 7d 100% │ 🐙 Tako
 ```
+
+上行走路径 / 分支 / 模型，下行走上下文和配额，窄终端不再挤成一行省略号。
 
 | 段 | 含义 |
 |---|---|
-| `⚡` | 上下文**剩余**百分比 |
+| `⚡` | 上下文**剩余**百分比，默认块状进度条 |
 | `💰` | 配额**已用**百分比。有 5 小时窗口就显示 `5h` + `7d`；没有 5h 才显示 daily |
 | 颜色 | 已用 &lt;70% 绿，70–90% 黄，≥90% 红 |
 
-配额 API 用的是 `POST /apiStats/api/get-key-id` 返回的**数字 id**，不是 config 里的 UUID。没有 key 时只显示路径 / 分支 / 模型 / 上下文。
+```text
+/tfooter          # 在 blocks / braille / off 之间轮换
+/tfooter blocks   # █░ 块状（默认）
+/tfooter braille  # ⣿⣀ 更细
+/tfooter off      # 不要进度条，只留 ⚡73% 10k/500k
+```
+
+偏好写在 `~/.pi/agent/tako-footer.json`。配额 API 用的是 `POST /apiStats/api/get-key-id` 返回的**数字 id**，不是 config 里的 UUID。没有 key 时只显示路径 / 分支 / 模型 / 上下文。
 
 ---
 
@@ -296,7 +309,8 @@ task({ prompt: "只读摸 auth", tier: "normal", readonly: true })
 - 不要叠第二个 compact 插件。
 - wrap `streamSimple` 不要带 `models`。
 - 配额 id 是数字，不是 UUID。
-- 不要装 `pi-claude-code-tui`，它会清 footer、叠第二套 header。
+- 不要装会改整屏的 `pi-claude-code-tui`，它会清 footer、叠第二套 header。
+- 工具调用皮肤用 `npm:pi-claude-code-ui`（只改工具行，不抢 header/footer）。tako 启动 Pi 时会自动补上。
 - 顶栏 logo 如需 Claude 风可另装 `npm:pi-cc-header`，与本包 footer 不冲突。
 
 Pi 包和本机权限相同。装别人的包之前先看源码。
