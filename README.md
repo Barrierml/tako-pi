@@ -38,12 +38,17 @@ npm i -g @earendil-works/pi-coding-agent
 pi install git:github.com/Barrierml/tako-pi
 ```
 
-本机准备 key（插件只读，不写回去）：
+凭据来源（插件只读，不写回去）：
+
+1. **由 Tako CLI 启动**：CLI 通过子进程环境传入 `TAKO_API_KEY`、`TAKO_BASE_URL`、`TAKO_HOME`。插件只从进程环境读取；`TAKO_API_KEY=""` 表示本次启动明确无凭据，不会回退到保存的账号。
+2. **单独运行 Pi**：读取 `$TAKO_HOME/config.json`（`TAKO_HOME` 未设置时用 `~/.tako/config.json`）。
 
 ```json
-// ~/.tako/config.json
+// ~/.tako/config.json（standalone 模式）
 { "apiKey": "sk-..." }
 ```
+
+key 只留在内存/进程环境，不写回磁盘，也不打印到日志。
 
 推荐 `~/.pi/agent/settings.json`：
 
@@ -80,7 +85,7 @@ pi install git:github.com/Barrierml/tako-pi
 }
 ```
 
-没有 `~/.tako/config.json` 也不会报错。
+没有凭据（启动环境与 config 都没有）也不会报错。
 
 ### 其它装法
 
@@ -117,7 +122,7 @@ pi install ~/.pi/agent/local/tako-pi
 
 - 默认 provider：`auto`（网关按权重路由到可用家族）
 - 可选：`auto` / `deepseek` / `workbuddy` / `kiro` / `groq` / `grok` / `grok_x`
-- 密钥同样只读 `~/.tako/config.json`
+- 密钥走同一条鉴权链：启动环境 `TAKO_API_KEY`，或 standalone 的 `$TAKO_HOME`/`~/.tako` config（只读）
 
 没有 key 时工具会报缺配置，不会把整个插件打挂。
 

@@ -9,6 +9,8 @@
  *   non-http(s) value fails closed; it is never replaced by the official URL.
  * - Only when the env contract is absent do standalone runs read the legacy
  *   TAKO_HOME||~/.tako config.
+ * - Env values are never written to disk. In launch mode the legacy config
+ *   is not an identity source: the chosen account comes only from env.
  */
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
@@ -20,8 +22,17 @@ export const TAKO_BASE = "https://tako.shiroha.tech";
 const env = typeof process !== "undefined" ? process.env : {};
 
 function resolveTakoHome(): string {
-  const home = typeof env.TAKO_HOME === "string" && env.TAKO_HOME.trim() ? env.TAKO_HOME : null;
-  return home ?? join(homedir(), ".tako");
+  const home = typeof env.TAKO_HOME === "string" ? env.TAKO_HOME.trim() : "";
+  return home || join(homedir(), ".tako");
+}
+
+/**
+ * True when the launcher supplies the launch-scoped credential contract.
+ * In that mode the legacy config is not an identity source: the selected
+ * account comes only from the process env.
+ */
+export function isLaunchScoped(): boolean {
+  return Object.hasOwn(env, "TAKO_API_KEY");
 }
 
 export const TAKO_CONFIG_PATH = join(resolveTakoHome(), "config.json");
@@ -110,7 +121,7 @@ function legacyApiKey(): string | undefined {
 export function getTakoIdentity(): TakoIdentity | null {
   const baseOverride = typeof env.TAKO_BASE_URL === "string" ? env.TAKO_BASE_URL : undefined;
 
-  if (Object.hasOwn(env, "TAKO_API_KEY")) {
+  if (isLaunchScoped()) {
     const apiKey = typeof env.TAKO_API_KEY === "string" ? env.TAKO_API_KEY : "";
     if (!apiKey) return null;
     const gateway = baseOverride !== undefined ? normalizeGatewayBase(baseOverride) : TAKO_BASE;
@@ -153,6 +164,9 @@ export function readTakoApiKey(): string {
 }
 
 export function readTakoApiId(): string | undefined {
+  // Legacy account metadata, not part of the launch env. Never let a launch
+  // pick it up from a config.json that may belong to another account.
+  if (isLaunchScoped()) return undefined;
   const id = readTakoConfig().apiId;
   return typeof id === "string" && id ? id : undefined;
 }

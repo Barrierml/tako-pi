@@ -9,6 +9,9 @@
     "url": "git+https://github.com/Barrierml/tako-pi.git"
   },
   "description": "Pi package: Tako catalog/search/quota, plus mid-turn compact that works with any provider.",
+  "scripts": {
+    "test": "node --test \"tests/**/*.test.ts\""
+  },
   "keywords": ["pi-package", "tako"],
   "pi": {
     "extensions": [

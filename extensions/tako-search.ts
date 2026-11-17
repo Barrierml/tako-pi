@@ -2,7 +2,9 @@
  * Tako web_search for Pi.
  *
  * POST https://tako.shiroha.tech/v1/search
- * Auth: ~/.tako/config.json apiKey
+ * Auth: the launch identity from ../lib/tako-auth.ts (TAKO_API_KEY from the
+ * Tako CLI launcher; standalone runs fall back to TAKO_HOME||~/.tako config).
+ * The key stays in memory/env and is never written back.
  * Default family: auto (gateway routes to the weighted provider pool).
  *
  * This is the Tako-native replacement for pi-web-access search providers
@@ -80,7 +82,7 @@ export default function (pi: ExtensionAPI) {
     name: "web_search",
     label: "Web Search",
     description:
-      "Search the web via Tako POST /v1/search. Uses ~/.tako/config.json. Default provider is auto (gateway picks a working family). Optional provider: auto, deepseek, workbuddy, kiro, groq, grok, grok_x. Cite results[].url when present.",
+      "Search the web via Tako POST /v1/search. Uses the launch credential (TAKO_API_KEY) or the legacy config under TAKO_HOME (default ~/.tako) in standalone runs. Default provider is auto (gateway picks a working family). Optional provider: auto, deepseek, workbuddy, kiro, groq, grok, grok_x. Cite results[].url when present.",
     promptSnippet:
       "Use web_search for live web facts. Prefer citing returned source URLs. Do not invent other search APIs.",
     parameters: Type.Object({
@@ -141,7 +143,7 @@ export default function (pi: ExtensionAPI) {
       const rawText = await response.text();
       if (response.status === 401 || response.status === 403) {
         return {
-          content: [{ type: "text" as const, text: `Tako search auth failed (HTTP ${response.status}). Check ~/.tako/config.json apiKey.` }],
+          content: [{ type: "text" as const, text: `Tako search auth failed (HTTP ${response.status}). Check the launch credential (TAKO_API_KEY) or the Tako account in use.` }],
           details: { error: `HTTP ${response.status}`, provider },
         };
       }
