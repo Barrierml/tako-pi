@@ -3,7 +3,7 @@
  *
  * POST https://tako.shiroha.tech/v1/search
  * Auth: ~/.tako/config.json apiKey
- * Default family: kab (groq can 413 on longer queries).
+ * Default family: auto (gateway routes to the weighted provider pool).
  *
  * This is the Tako-native replacement for pi-web-access search providers
  * (Brave/Tavily/…). Fetch/PDF/YouTube from that package are not included.
@@ -12,7 +12,7 @@ import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getTakoIdentity } from "../lib/tako-auth.ts";
 const SEARCH_TIMEOUT_MS = 20_000;
-const PROVIDERS = ["kab", "groq", "grok", "grok_x"] as const;
+const PROVIDERS = ["auto", "deepseek", "workbuddy", "kiro", "groq", "grok", "grok_x"] as const;
 type TakoSearchProvider = (typeof PROVIDERS)[number];
 
 type SearchHit = {
@@ -38,7 +38,7 @@ function normalizeProvider(value: unknown): TakoSearchProvider {
     const n = value.trim().toLowerCase();
     if ((PROVIDERS as readonly string[]).includes(n)) return n as TakoSearchProvider;
   }
-  return "kab";
+  return "auto";
 }
 
 function asHits(value: unknown): SearchHit[] {
@@ -80,14 +80,14 @@ export default function (pi: ExtensionAPI) {
     name: "web_search",
     label: "Web Search",
     description:
-      "Search the web via Tako POST /v1/search. Uses ~/.tako/config.json. Default provider is kab (returns source URLs). Optional provider: kab, groq, grok, grok_x. Groq may return only an answer. Cite results[].url when present.",
+      "Search the web via Tako POST /v1/search. Uses ~/.tako/config.json. Default provider is auto (gateway picks a working family). Optional provider: auto, deepseek, workbuddy, kiro, groq, grok, grok_x. Cite results[].url when present.",
     promptSnippet:
       "Use web_search for live web facts. Prefer citing returned source URLs. Do not invent other search APIs.",
     parameters: Type.Object({
       query: Type.String({ description: "Search query" }),
       count: Type.Optional(Type.Integer({ minimum: 1, maximum: 20, description: "Result count (default 5, max 20)" })),
       provider: Type.Optional(
-        Type.String({ description: "Tako search family: kab (default), groq, grok, grok_x" }),
+        Type.String({ description: "Tako search family: auto (default), deepseek, workbuddy, kiro, groq, grok, grok_x" }),
       ),
     }),
 

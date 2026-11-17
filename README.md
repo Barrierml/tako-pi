@@ -115,8 +115,8 @@ pi install ~/.pi/agent/local/tako-pi
 
 给 agent 一个 `web_search` 工具，打到 Tako `POST /v1/search`。
 
-- 默认 provider：`kab`（结果带 `url`）
-- 可选：`groq` / `grok` / `grok_x`
+- 默认 provider：`auto`（网关按权重路由到可用家族）
+- 可选：`auto` / `deepseek` / `workbuddy` / `kiro` / `groq` / `grok` / `grok_x`
 - 密钥同样只读 `~/.tako/config.json`
 
 没有 key 时工具会报缺配置，不会把整个插件打挂。
