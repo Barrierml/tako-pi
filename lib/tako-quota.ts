@@ -3,7 +3,7 @@
  * Prefers /apiStats/api/user-quota (window + week + day). Wallet balance is
  * shown when the payload includes it.
  */
-import { TAKO_BASE, resolveTakoNumericApiId } from "./tako-auth.ts";
+import { getTakoIdentity, resolveTakoNumericApiId } from "./tako-auth.ts";
 
 const FETCH_MS = 4000;
 const CACHE_MS = 60_000;
@@ -65,17 +65,19 @@ export async function fetchTakoQuota(force = false): Promise<TakoQuota> {
   if (inflight) return inflight;
 
   inflight = (async () => {
+    const identity = getTakoIdentity();
     const apiId = await resolveTakoNumericApiId();
-    if (!apiId) {
+    if (!identity || !apiId) {
       cache = { fetchedAt: Date.now(), error: "missing apiId" };
       return cache;
     }
     try {
-      const res = await fetch(`${TAKO_BASE}/apiStats/api/user-quota`, {
+      const res = await fetch(`${identity.apiStatsUrl}/user-quota`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ apiId }),
         signal: AbortSignal.timeout(FETCH_MS),
+        redirect: "error",
       });
       if (!res.ok) {
         cache = { fetchedAt: Date.now(), error: `quota http ${res.status}` };

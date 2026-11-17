@@ -5,7 +5,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
-import { TAKO_BASE, TAKO_CONFIG_PATH, tryReadTakoApiKey, type TakoConfig } from "../lib/tako-auth.ts";
+import { getTakoIdentity, TAKO_CONFIG_PATH, type TakoConfig, type TakoIdentity } from "../lib/tako-auth.ts";
 
 const WIDGET = "tako-welcome";
 const FETCH_MS = 2500;
@@ -17,11 +17,12 @@ type Announcement = {
   type?: string;
 };
 
-async function fetchAnnouncement(apiKey: string): Promise<Announcement | undefined> {
+async function fetchAnnouncement(identity: TakoIdentity): Promise<Announcement | undefined> {
   try {
-    const res = await fetch(`${TAKO_BASE}/v1/announcements/popup`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
+    const res = await fetch(identity.announcementsUrl, {
+      headers: { Authorization: `Bearer ${identity.apiKey}` },
       signal: AbortSignal.timeout(FETCH_MS),
+      redirect: "error",
     });
     if (!res.ok) return undefined;
     const json = (await res.json()) as { announcement?: Announcement | null };
@@ -104,9 +105,9 @@ export default function (pi: ExtensionAPI) {
   }
 
   async function load(): Promise<Announcement | undefined> {
-    const apiKey = tryReadTakoApiKey();
-    if (!apiKey) return undefined;
-    const announcement = await fetchAnnouncement(apiKey);
+    const identity = getTakoIdentity();
+    if (!identity) return undefined;
+    const announcement = await fetchAnnouncement(identity);
     if (announcement) markAnnouncementSeen(announcement.id);
     return announcement;
   }

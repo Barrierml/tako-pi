@@ -9,16 +9,19 @@
  * Use /effort off or low — high thinking can eat the whole 32k by itself.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { TAKO_BASE } from "../lib/tako-auth.ts";
+import { getTakoIdentity, takoProviderApiKeyValue } from "../lib/tako-auth.ts";
 
 const WINDOW = 32_000;
 const MAX_TOKENS = 4096;
 
 export default function (pi: ExtensionAPI) {
+  const identity = getTakoIdentity();
+  if (!identity) return;
   pi.registerProvider("tako-tiny32k", {
     name: "Tako 32k test",
-    baseUrl: `${TAKO_BASE}/api`,
-    apiKey: "!node -p \"require(require('os').homedir() + '/.tako/config.json').apiKey\"",
+    baseUrl: identity.messagesBaseUrl,
+    apiKey: takoProviderApiKeyValue(identity),
+    authHeader: true,
     api: "anthropic-messages",
     models: [
       {

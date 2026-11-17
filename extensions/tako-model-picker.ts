@@ -15,6 +15,7 @@ import {
   type Component,
   type Focusable,
 } from "@earendil-works/pi-tui";
+import { getTakoIdentity } from "../lib/tako-auth.ts";
 
 const PREFS_PATH = join(homedir(), ".pi", "agent", "tako-model-prefs.json");
 const ENTRY_TYPE = "tako-model-pick";
@@ -69,18 +70,30 @@ function clampThinking(value: string | undefined): ThinkingLevel {
   return parseThinking(value ?? "") ?? "medium";
 }
 
+/**
+ * The saved pick belongs to one account+gateway. Legacy single-object files
+ * carry no identity, so they can never satisfy a scoped lookup.
+ */
 function readPrefs(): Prefs | null {
   try {
+    const identity = getTakoIdentity();
+    if (!identity) return null;
     const raw = JSON.parse(readFileSync(PREFS_PATH, "utf-8"));
-    if (!raw || typeof raw !== "object") return null;
-    if (typeof raw.modelId !== "string" || !raw.modelId) return null;
-    if (typeof raw.contextWindow !== "number" || raw.contextWindow <= 0) return null;
-    const thinkingLevel = parseThinking(raw.thinkingLevel);
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const scoped = (raw as Record<string, unknown>).byIdentity;
+    if (!scoped || typeof scoped !== "object" || Array.isArray(scoped)) return null;
+    const entry = (scoped as Record<string, unknown>)[identity.accountFingerprint];
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+    const e = entry as Record<string, unknown>;
+    if (e.gatewayBaseUrl !== identity.gatewayBaseUrl) return null;
+    if (typeof e.modelId !== "string" || !e.modelId) return null;
+    if (typeof e.contextWindow !== "number" || e.contextWindow <= 0) return null;
+    const thinkingLevel = parseThinking(e.thinkingLevel as string);
     if (!thinkingLevel) return null;
     return {
-      provider: typeof raw.provider === "string" && raw.provider ? raw.provider : PROVIDER,
-      modelId: raw.modelId,
-      contextWindow: Math.round(raw.contextWindow),
+      provider: typeof e.provider === "string" && e.provider ? e.provider : PROVIDER,
+      modelId: e.modelId,
+      contextWindow: Math.round(e.contextWindow),
       thinkingLevel,
     };
   } catch {
@@ -90,8 +103,27 @@ function readPrefs(): Prefs | null {
 
 function writePrefs(prefs: Prefs): void {
   try {
+    const identity = getTakoIdentity();
+    if (!identity) return;
     mkdirSync(join(homedir(), ".pi", "agent"), { recursive: true });
-    writeFileSync(PREFS_PATH, JSON.stringify(prefs, null, 2) + "\n");
+    let byIdentity: Record<string, unknown> = {};
+    try {
+      const raw = JSON.parse(readFileSync(PREFS_PATH, "utf-8"));
+      const scoped = raw?.byIdentity;
+      if (scoped && typeof scoped === "object" && !Array.isArray(scoped)) {
+        byIdentity = { ...(scoped as Record<string, unknown>) };
+      }
+    } catch {
+      /* start fresh */
+    }
+    byIdentity[identity.accountFingerprint] = {
+      gatewayBaseUrl: identity.gatewayBaseUrl,
+      provider: prefs.provider,
+      modelId: prefs.modelId,
+      contextWindow: prefs.contextWindow,
+      thinkingLevel: prefs.thinkingLevel,
+    };
+    writeFileSync(PREFS_PATH, JSON.stringify({ version: 2, byIdentity }, null, 2) + "\n", { mode: 0o600 });
   } catch {
     /* ignore */
   }
