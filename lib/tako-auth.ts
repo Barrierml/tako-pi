@@ -83,7 +83,7 @@ function normalizeGatewayBase(raw: string): string | null {
     return null;
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") return null;
-  if (url.username || url.password || url.hash) return null;
+  if (url.username || url.password || url.hash || url.search) return null;
   const clean = url.toString().replace(/\/+$/, "");
   return clean;
 }
@@ -133,13 +133,13 @@ export function getTakoIdentity(): TakoIdentity | null {
 }
 
 /**
- * Provider-config apiKey value. Uses env interpolation so the key is resolved
- * per-request from the process env (the same identity the catalog used) —
- * never re-read from a config file at request time, never a literal key on
- * disk.
+ * Provider-config apiKey value. Returns the resolved identity key itself so
+ * registration and catalog auth always come from the same source — never a
+ * literal on disk, never an env placeholder that can resolve empty when the
+ * identity came from the legacy config instead of TAKO_API_KEY.
  */
-export function takoProviderApiKeyValue(): string {
-  return "$TAKO_API_KEY";
+export function takoProviderApiKeyValue(identity: TakoIdentity): string {
+  return identity.apiKey;
 }
 
 export function tryReadTakoApiKey(): string | undefined {

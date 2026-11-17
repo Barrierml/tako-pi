@@ -12,13 +12,16 @@
  */
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { existsSync, readFileSync } from "node:fs";
-import { readFile, rename, writeFile, mkdir } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { open, readFile, rename, stat, unlink, writeFile, mkdir } from "node:fs/promises";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { getTakoIdentity, takoProviderApiKeyValue, TAKO_BASE, type TakoIdentity } from "../lib/tako-auth.ts";
+import { getTakoIdentity, takoProviderApiKeyValue, type TakoIdentity } from "../lib/tako-auth.ts";
 
 const CACHE_PATH = join(homedir(), ".pi", "agent", "tako-models-cache-v2.json");
-const TAKO_DEV_CACHE = join(homedir(), ".tako", "models-cache.json");
+const LOCK_PATH = `${CACHE_PATH}.lock`;
+const LOCK_STALE_MS = 30000; // older holder is presumed crashed; take the lock
+const LOCK_POLL_MS = 25;
+const LOCK_WAIT_MS = 4000;
 const DEFAULT_WINDOW = 128000;
 const STALE_MS = 60 * 60 * 1000; // 1h; older or future-dated buckets lose catalog eligibility.
 const FETCH_MS = 8000;
@@ -120,7 +123,12 @@ function parseCompleteCatalog(json: unknown): ChatModel[] | null {
 async function readSnapshot(): Promise<CacheV2> {
   try {
     const raw = JSON.parse(await readFile(CACHE_PATH, "utf-8"));
-    if (raw?.version !== 2 || typeof raw.buckets !== "object" || raw.buckets === null) {
+    if (
+      raw?.version !== 2 ||
+      typeof raw.buckets !== "object" ||
+      raw.buckets === null ||
+      Array.isArray(raw.buckets)
+    ) {
       return { version: 2, buckets: {} };
     }
     return raw as CacheV2;
@@ -150,14 +158,55 @@ async function readCachedBucket(identity: TakoIdentity): Promise<ChatModel[] | n
   return bucket.models;
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 /**
- * Persist a completed fetch for this identity. Read-modify-write keeps other
- * accounts' buckets intact; a failed write leaves the old file untouched.
+ * Best-effort cross-process mutex around the shared snapshot's
+ * read-modify-write. `wx` create is atomic; a lock older than LOCK_STALE_MS
+ * belongs to a crashed holder and is replaced. Skipping on timeout is safe:
+ * the worst case is a lost bucket, never a corrupted file.
+ */
+async function acquireSnapshotLock(): Promise<(() => void) | null> {
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  for (;;) {
+    try {
+      const handle = await open(LOCK_PATH, "wx", 0o600);
+      return () => {
+        handle.close().catch(() => {});
+        unlink(LOCK_PATH).catch(() => {});
+      };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code !== "EEXIST") return null;
+      try {
+        const st = await stat(LOCK_PATH);
+        if (Date.now() - st.mtimeMs > LOCK_STALE_MS) {
+          await unlink(LOCK_PATH).catch(() => {});
+          continue;
+        }
+      } catch {
+        /* lock vanished between open and stat — retry */
+        continue;
+      }
+      if (Date.now() >= deadline) return null;
+      await sleep(LOCK_POLL_MS + Math.floor(Math.random() * LOCK_POLL_MS));
+    }
+  }
+}
+
+/**
+ * Persist a completed fetch for this identity. Read-modify-write under a
+ * cross-process lock keeps other accounts' buckets intact; a failed write
+ * leaves the old file untouched.
  */
 async function writeCachedBucket(identity: TakoIdentity, models: ChatModel[]): Promise<void> {
-  const snap = await readSnapshot();
-  snap.buckets[bucketKey(identity)] = { fetchedAt: Date.now(), models };
-  await writeSnapshot(snap);
+  const release = await acquireSnapshotLock();
+  try {
+    const snap = await readSnapshot();
+    snap.buckets[bucketKey(identity)] = { fetchedAt: Date.now(), models };
+    await writeSnapshot(snap);
+  } finally {
+    release?.();
+  }
 }
 
 /**
@@ -190,7 +239,7 @@ export default async function (pi: ExtensionAPI) {
     pi.registerProvider("tako", {
       name: "Tako",
       baseUrl: identity.messagesBaseUrl,
-      apiKey: takoProviderApiKeyValue(),
+      apiKey: takoProviderApiKeyValue(identity),
       authHeader: true,
       api: "anthropic-messages",
       models,

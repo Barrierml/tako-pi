@@ -20,7 +20,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerProvider("tako-tiny32k", {
     name: "Tako 32k test",
     baseUrl: identity.messagesBaseUrl,
-    apiKey: takoProviderApiKeyValue(),
+    apiKey: takoProviderApiKeyValue(identity),
     authHeader: true,
     api: "anthropic-messages",
     models: [
