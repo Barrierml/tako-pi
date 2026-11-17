@@ -1,23 +1,27 @@
 /**
  * Register Tako as a Pi provider with a live model catalog.
  *
- * Auth: ~/.tako/config.json apiKey (same source Tako CLI uses).
- * Catalog: GET https://tako.shiroha.tech/v1/models?client_version=tako-cli&api_type=claude
- * Fallback: ~/.pi/agent/tako-models-cache.json, then ~/.pi/agent/models.json.
+ * Auth: the launch identity from ../lib/tako-auth.ts — the CLI passes
+ * TAKO_API_KEY/TAKO_BASE_URL/TAKO_HOME in the child env; standalone runs use
+ * the legacy TAKO_HOME||~/.tako config.
+ *
+ * Catalog: GET <gateway>/v1/models?client_version=tako-cli&api_type=claude,
+ * cached per account+gateway in version-2
+ * ~/.pi/agent/tako-models-cache-v2.json. This extension never writes
+ * models.json: a user-defined provider config stays authoritative.
  */
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, rename, writeFile, mkdir } from "node:fs/promises";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { tryReadTakoApiKey, TAKO_BASE } from "../lib/tako-auth.ts";
+import { getTakoIdentity, takoProviderApiKeyValue, TAKO_BASE, type TakoIdentity } from "../lib/tako-auth.ts";
 
-const TAKO_MESSAGES_BASE = `${TAKO_BASE}/api`;
-const MODELS_URL = `${TAKO_BASE}/v1/models?client_version=tako-cli&api_type=claude`;
-const CACHE_PATH = join(homedir(), ".pi", "agent", "tako-models-cache.json");
-const MODELS_JSON_PATH = join(homedir(), ".pi", "agent", "models.json");
+const CACHE_PATH = join(homedir(), ".pi", "agent", "tako-models-cache-v2.json");
 const TAKO_DEV_CACHE = join(homedir(), ".tako", "models-cache.json");
 const DEFAULT_WINDOW = 128000;
+const STALE_MS = 60 * 60 * 1000; // 1h; older or future-dated buckets lose catalog eligibility.
+const FETCH_MS = 8000;
 
 type ChatModel = {
   id: string;
@@ -36,6 +40,14 @@ type CodexModelDTO = {
   model_category?: string;
 };
 
+/** Per-account bucket. [] = the gateway answered with a complete empty list. */
+type CacheBucket = { fetchedAt: number; models: ChatModel[] };
+type CacheV2 = { version: 2; buckets: Record<string, CacheBucket> };
+
+function bucketKey(identity: TakoIdentity): string {
+  return `${identity.gatewayBaseUrl}#claude#${identity.accountFingerprint}`;
+}
+
 function toChatModel(slug: string, name: string, contextWindow: number): ChatModel {
   return {
     id: slug,
@@ -51,8 +63,10 @@ function toChatModel(slug: string, name: string, contextWindow: number): ChatMod
 function loadDevWindows(): Map<string, number> {
   const map = new Map<string, number>();
   try {
-    if (!existsSync(TAKO_DEV_CACHE)) return map;
-    const raw = JSON.parse(readFileSync(TAKO_DEV_CACHE, "utf-8"));
+    const takoHome = typeof process.env.TAKO_HOME === "string" && process.env.TAKO_HOME.trim()
+      ? process.env.TAKO_HOME.trim()
+      : join(homedir(), ".tako");
+    const raw = JSON.parse(readFileSync(join(takoHome, "models-cache.json"), "utf-8"));
     const entries = Array.isArray(raw?.entries) ? raw.entries : [];
     for (const e of entries) {
       if (typeof e?.id !== "string" || typeof e?.contextWindow !== "number" || e.contextWindow <= 0) continue;
@@ -83,88 +97,101 @@ function fromCodex(models: CodexModelDTO[], fallback: Map<string, number>): Chat
   return out;
 }
 
-async function writeCache(models: ChatModel[]): Promise<void> {
-  try {
-    const fs = await import("node:fs/promises");
-    await fs.mkdir(join(homedir(), ".pi", "agent"), { recursive: true });
-    await fs.writeFile(
-      CACHE_PATH,
-      JSON.stringify({ fetchedAt: Date.now(), models }, null, 2) + "\n",
-    );
-    await fs.writeFile(
-      MODELS_JSON_PATH,
-      JSON.stringify(
-        {
-          providers: {
-            tako: {
-              name: "Tako",
-              baseUrl: TAKO_MESSAGES_BASE,
-              api: "anthropic-messages",
-              apiKey: "!node -p \"require(require('os').homedir() + '/.tako/config.json').apiKey\"",
-              models: models.map(({ id, name, contextWindow, reasoning }) => ({
-                id,
-                name,
-                contextWindow,
-                reasoning,
-              })),
-            },
-          },
-        },
-        null,
-        2,
-      ) + "\n",
-    );
-  } catch {
-    /* ignore */
+/**
+ * Only a complete, well-formed response may overwrite a bucket — including
+ * with [] (a genuinely empty account list). Anything else is a failure that
+ * keeps the previous snapshot.
+ */
+function parseCompleteCatalog(json: unknown): ChatModel[] | null {
+  if (!json || typeof json !== "object" || Array.isArray(json)) return null;
+  const data = json as Record<string, unknown>;
+  // This catalog is unpaginated. Do not publish the first page of a different
+  // protocol that advertises more, or guess its cursor semantics.
+  if (data.has_more !== undefined && data.has_more !== false) return null;
+  if (!Array.isArray(data.models)) return null;
+  for (const row of data.models) {
+    if (!row || typeof row !== "object" || Array.isArray(row)) return null;
+    const id = (row as Record<string, unknown>).slug;
+    if (typeof id !== "string" || !id.trim()) return null;
   }
+  return fromCodex(data.models as CodexModelDTO[], loadDevWindows());
 }
 
-async function readCache(): Promise<ChatModel[] | null> {
+async function readSnapshot(): Promise<CacheV2> {
   try {
     const raw = JSON.parse(await readFile(CACHE_PATH, "utf-8"));
-    if (Array.isArray(raw?.models) && raw.models.length > 0) return raw.models as ChatModel[];
-  } catch {
-    /* ignore */
-  }
-  try {
-    const raw = JSON.parse(await readFile(MODELS_JSON_PATH, "utf-8"));
-    const models = raw?.providers?.tako?.models;
-    if (Array.isArray(models) && models.length > 0) {
-      return models.map((m: { id: string; name?: string; contextWindow?: number }) =>
-        toChatModel(m.id, m.name || m.id, fillWindow(m.id, m.contextWindow || 0, loadDevWindows())),
-      );
+    if (raw?.version !== 2 || typeof raw.buckets !== "object" || raw.buckets === null) {
+      return { version: 2, buckets: {} };
     }
+    return raw as CacheV2;
   } catch {
-    /* ignore */
+    return { version: 2, buckets: {} };
   }
-  return null;
 }
 
-async function fetchLiveCatalog(apiKey: string): Promise<ChatModel[] | null> {
+async function writeSnapshot(snap: CacheV2): Promise<void> {
   try {
-    const res = await fetch(MODELS_URL, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-      signal: AbortSignal.timeout(8000),
+    await mkdir(join(homedir(), ".pi", "agent"), { recursive: true });
+    const tmp = `${CACHE_PATH}.tmp-${process.pid}`;
+    await writeFile(tmp, JSON.stringify(snap) + "\n", { mode: 0o600 });
+    await rename(tmp, CACHE_PATH);
+  } catch {
+    /* a failed write must not corrupt the previous file */
+  }
+}
+
+/** Cached catalog for this identity only. Stale or future-dated buckets do not qualify. */
+async function readCachedBucket(identity: TakoIdentity): Promise<ChatModel[] | null> {
+  const snap = await readSnapshot();
+  const bucket = snap.buckets[bucketKey(identity)];
+  if (!bucket || typeof bucket.fetchedAt !== "number" || !Array.isArray(bucket.models)) return null;
+  const age = Date.now() - bucket.fetchedAt;
+  if (age < 0 || age >= STALE_MS) return null;
+  return bucket.models;
+}
+
+/**
+ * Persist a completed fetch for this identity. Read-modify-write keeps other
+ * accounts' buckets intact; a failed write leaves the old file untouched.
+ */
+async function writeCachedBucket(identity: TakoIdentity, models: ChatModel[]): Promise<void> {
+  const snap = await readSnapshot();
+  snap.buckets[bucketKey(identity)] = { fetchedAt: Date.now(), models };
+  await writeSnapshot(snap);
+}
+
+/**
+ * Fetch the live catalog for the launch identity. Returns the model list to
+ * register — including [] — or null on network/protocol failure. On failure a
+ * still-fresh same-account snapshot may be returned instead.
+ */
+async function resolveCatalog(identity: TakoIdentity): Promise<ChatModel[] | null> {
+  const cached = await readCachedBucket(identity);
+  try {
+    const res = await fetch(identity.catalogUrl, {
+      headers: { Authorization: `Bearer ${identity.apiKey}` },
+      signal: AbortSignal.timeout(FETCH_MS),
+      redirect: "error",
     });
-    if (!res.ok) return null;
-    const json = (await res.json()) as { models?: CodexModelDTO[] };
-    const models = fromCodex(json.models ?? [], loadDevWindows());
-    if (models.length === 0) return null;
-    await writeCache(models);
+    if (!res.ok) return cached;
+    const models = parseCompleteCatalog(await res.json());
+    if (models === null) return cached;
+    await writeCachedBucket(identity, models);
     return models;
   } catch {
-    return null;
+    return cached;
   }
 }
 
 export default async function (pi: ExtensionAPI) {
-  const apiKey = tryReadTakoApiKey();
-  const models = (apiKey ? await fetchLiveCatalog(apiKey) : null) ?? (await readCache()) ?? [];
-  if (models.length > 0) {
+  const identity = getTakoIdentity();
+  const models = identity ? (await resolveCatalog(identity)) ?? [] : [];
+  if (identity && models.length > 0) {
     pi.registerProvider("tako", {
       name: "Tako",
-      baseUrl: TAKO_MESSAGES_BASE,
-      apiKey: "!node -p \"require(require('os').homedir() + '/.tako/config.json').apiKey\"",
+      baseUrl: identity.messagesBaseUrl,
+      apiKey: takoProviderApiKeyValue(),
+      authHeader: true,
       api: "anthropic-messages",
       models,
     });

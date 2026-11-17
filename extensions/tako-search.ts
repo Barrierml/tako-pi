@@ -10,9 +10,7 @@
  */
 import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { readTakoApiKey, TAKO_BASE } from "../lib/tako-auth.ts";
-
-const SEARCH_URL = `${TAKO_BASE}/v1/search`;
+import { getTakoIdentity } from "../lib/tako-auth.ts";
 const SEARCH_TIMEOUT_MS = 20_000;
 const PROVIDERS = ["kab", "groq", "grok", "grok_x"] as const;
 type TakoSearchProvider = (typeof PROVIDERS)[number];
@@ -104,11 +102,9 @@ export default function (pi: ExtensionAPI) {
 
       const count = normalizeCount(params.count);
       const provider = normalizeProvider(params.provider);
-      let apiKey: string;
-      try {
-        apiKey = readTakoApiKey();
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+      const identity = getTakoIdentity();
+      if (!identity) {
+        const message = "tako-pi: no Tako credentials for this launch";
         return {
           content: [{ type: "text" as const, text: `Error: ${message}` }],
           details: { error: message },
@@ -118,16 +114,17 @@ export default function (pi: ExtensionAPI) {
       const body = { query, count, provider };
       let response: Response;
       try {
-        response = await fetch(SEARCH_URL, {
+        response = await fetch(identity.searchUrl, {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${apiKey}`,
+            Authorization: `Bearer ${identity.apiKey}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify(body),
           signal: signal
             ? AbortSignal.any([AbortSignal.timeout(SEARCH_TIMEOUT_MS), signal])
             : AbortSignal.timeout(SEARCH_TIMEOUT_MS),
+          redirect: "error",
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
